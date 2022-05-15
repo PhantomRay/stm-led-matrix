@@ -68,7 +68,7 @@ public:
     ClearBits(~value & mask);
     SetBits(value & mask);
   }
-
+  inline void Write(uint32_t value) { WriteMaskedBits(value, output_bits_); }
   inline gpio_bits_t Read() const { return ReadRegisters() & input_bits_; }
 
   // Return if this is appears to be a Pi4

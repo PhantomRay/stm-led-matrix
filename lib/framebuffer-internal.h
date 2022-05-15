@@ -159,6 +159,9 @@ private:
   const int double_rows_;
   const size_t buffer_size_;
 
+  const char* panel_type_;
+  int scan_count_ = 0;
+
   // The frame-buffer is organized in bitplanes.
   // Highest level (slowest to cycle through) are double rows.
   // For each double-row, we store pwm-bits columns of a bitplane.
@@ -166,7 +169,9 @@ private:
   // Of course, that means that we store unrelated bits in the frame-buffer,
   // but it allows easy access in the critical section.
   gpio_bits_t *bitplane_buffer_;
+  gpio_bits_t bit_zero_ = 0;
   inline gpio_bits_t *ValueAt(int double_row, int column, int bit);
+  inline gpio_bits_t *DumpValueAt(int double_row, int column, int bit);
 
   PixelDesignatorMap **shared_mapper_;  // Storage in RGBMatrix.
 };

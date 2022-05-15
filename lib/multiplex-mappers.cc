@@ -454,6 +454,15 @@ public:
   }
 };
 
+class RocketsignMapper : public MultiplexMapperBase {
+public:
+  RocketsignMapper() : MultiplexMapperBase("Rocketsign", 5) {}
+  void MapSinglePanel(int x, int y, int *matrix_x, int *matrix_y) const {
+    *matrix_x = (((panel_rows_ / 2) / 3) - ((y % (panel_rows_ / 2)) / 3) - 1) * 30 + x;
+	  *matrix_y = y % 3 + 3 * (y / (panel_cols_ / 2));
+  }
+};
+
 /*
  * Here is where the registration happens.
  * If you add an instance of the mapper here, it will automatically be
@@ -481,6 +490,7 @@ static MuxMapperList *CreateMultiplexMapperList() {
   result->push_back(new P8Outdoor1R1G1BMultiplexMapper());
   result->push_back(new FlippedStripeMultiplexMapper());
   result->push_back(new P10Outdoor32x16HalfScanMapper());
+  result->push_back(new RocketsignMapper());
   return result;
 }
 

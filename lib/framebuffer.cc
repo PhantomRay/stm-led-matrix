@@ -28,11 +28,18 @@
 #include <string.h>
 
 #include <algorithm>
+#include <sys/mman.h>
+#include <time.h>
 
 #include "gpio.h"
 
 namespace rgb_matrix {
 namespace internal {
+
+enum {
+  kBitPlanes = 16 // maximum usable bitplanes.
+};
+
 // We need one global instance of a timing correct pulser. There are different
 // implementations depending on the context.
 static PinPulser *sOutputEnablePulser = NULL;
@@ -549,6 +556,91 @@ static void InitFM6127(GPIO *io, const struct HardwareMapping &h, int columns) {
   io->ClearBits(h.strobe);
 }
 
+
+static void InitChipSendLAT(GPIO *io, const struct HardwareMapping &h, int clocks, int additionalClock = 0)
+{
+  io->Write(0);
+  for (int i = 0; i < additionalClock; i++)
+  {
+    io->SetBits(h.clock);
+    io->ClearBits(h.clock);
+  }
+  io->SetBits(h.strobe);
+  for (int i = 0; i < clocks; i++)
+  {
+    io->SetBits(h.clock);
+    io->ClearBits(h.clock);
+  }
+  io->ClearBits(h.strobe);
+  io->Write(0);
+  // struct timespec sleep_time = { 0, 3 };
+  // nanosleep(&sleep_time, NULL);
+}
+
+static void InitChipSendConfData(GPIO *io, const struct HardwareMapping &h, const char *dataR, const char *dataG, const char *dataB, int lats, int columns, bool allowOE = false)
+{
+  const uint32_t bits_on = h.p0_r1 | h.p0_g1 | h.p0_b1 | h.p0_r2 | h.p0_g2 | h.p0_b2;
+  const uint32_t bits_off = 0;
+
+  for (int i = 0; i < columns; ++i)
+  {
+    uint32_t value = 0;
+    if (dataR[i % 16] == '1')
+    {
+      value |= h.p0_r1 | h.p0_r2;
+    }
+    if (dataG[i % 16] == '1')
+    {
+      value |= h.p0_g1 | h.p0_g2;
+    }
+    if (dataB[i % 16] == '1')
+    {
+      value |= h.p0_b1 | h.p0_b2;
+    }
+    if (i >= columns - lats){
+      value |= h.strobe;
+    }
+    if(allowOE) {
+      value |= h.output_enable;
+    }
+    io->Write(value);
+    io->SetBits(h.clock);
+    io->ClearBits(h.clock);
+  }
+  io->ClearBits(h.strobe);
+  if(allowOE){
+    io->ClearBits(h.output_enable);
+  }
+}
+
+static void InitICN2053(GPIO *io, const struct HardwareMapping &h, int columns)
+{
+  int signal_columns = (columns / 15) * 16;
+  io->ClearBits(h.clock | h.strobe);
+  InitChipSendLAT(io, h, 14);                                                                                  // Pre-active command
+  InitChipSendLAT(io, h, 12);                                                                                  // Enable all output channels
+  InitChipSendLAT(io, h, 3, 1);                                                                                // Vertical sync
+  InitChipSendLAT(io, h, 14);                                                                                  // Pre-active command
+  InitChipSendConfData(io, h, "0000001001110000", "0000001001110000", "0000001001110000", 4, signal_columns);  // Write config register 1 (4 latches)
+  InitChipSendLAT(io, h, 14);                                                                                  // Pre-active command
+  InitChipSendConfData(io, h, "0111111100000000", "0110011100000000", "0101111100000000", 6, signal_columns);  // Write config register 2 (6 latches)
+  InitChipSendLAT(io, h, 14);                                                                                  // Pre-active command
+  InitChipSendConfData(io, h, "0100000011110111", "0100000011110111", "0100000011110111", 8, signal_columns);  // Write config register 3 (8 latches)
+  InitChipSendLAT(io, h, 14);                                                                                  // Pre-active command
+  InitChipSendConfData(io, h, "0000000000000000", "0000000000000000", "0000000000000000", 10, signal_columns); // Write config register 4 (10 latches)
+  InitChipSendLAT(io, h, 14);                                                                                  // Pre-active command
+  InitChipSendConfData(io, h, "0000000000000000", "0000000000000000", "0000000000000000", 2, signal_columns);  // Write debug register (2 latches)
+}
+
+static void InitMBI5124(GPIO *io, const struct HardwareMapping &h, int columns)
+{
+  int signal_columns = (columns / 15) * 16;
+  io->ClearBits(h.clock | h.strobe);                                                                         // Pre-active command
+  InitChipSendConfData(io, h, "1110000101101011", "1110000101101110", "1110000101101110", 4, signal_columns, true);  // Write config register 1 (4 latches)
+  struct timespec sleep_time= { 0, 10000 };
+  nanosleep(&sleep_time, NULL);
+}
+
 /*static*/ void Framebuffer::InitializePanels(GPIO *io,
                                               const char *panel_type,
                                               int columns) {
@@ -558,6 +650,14 @@ static void InitFM6127(GPIO *io, const struct HardwareMapping &h, int columns) {
   }
   else if (strncasecmp(panel_type, "fm6127", 6) == 0) {
     InitFM6127(io, *hardware_mapping_, columns);
+  }
+  else if (strncasecmp(panel_type, "icn2053", 7) == 0)
+  {
+    // InitICN2053(io, *hardware_mapping_, columns);
+  }
+  else if (strncasecmp(panel_type, "mbi5124", 7) == 0)  // more init types
+  {
+    InitMBI5124(io, *hardware_mapping_, columns);
   }
   // else if (strncasecmp(...))  // more init types
   else {
@@ -807,71 +907,111 @@ void Framebuffer::CopyFrom(const Framebuffer *other) {
   memcpy(bitplane_buffer_, other->bitplane_buffer_, buffer_size_);
 }
 
-void Framebuffer::DumpToMatrix(GPIO *io, int pwm_low_bit) {
+inline gpio_bits_t *Framebuffer::DumpValueAt(int double_row, int column, int bit)
+{
+  if(column % 16 == 0) {
+    return &bit_zero_;
+  } else {
+    int new_column = column - ((column / 16) + 1);
+    int pos = double_row * (columns_ * kBitPlanes) + bit * columns_ + new_column;
+    return &bitplane_buffer_[pos];
+  }
+}
+
+void Framebuffer::DumpToMatrix(GPIO *io, int pwm_low_bit)
+{
+  // fprintf(stdout, "panel_type %s \n", panel_type_);
   const struct HardwareMapping &h = *hardware_mapping_;
-  gpio_bits_t color_clk_mask = 0;  // Mask of bits while clocking in.
-  color_clk_mask |= h.p0_r1 | h.p0_g1 | h.p0_b1 | h.p0_r2 | h.p0_g2 | h.p0_b2;
-  if (parallel_ >= 2) {
-    color_clk_mask |= h.p1_r1 | h.p1_g1 | h.p1_b1 | h.p1_r2 | h.p1_g2 | h.p1_b2;
-  }
-  if (parallel_ >= 3) {
-    color_clk_mask |= h.p2_r1 | h.p2_g1 | h.p2_b1 | h.p2_r2 | h.p2_g2 | h.p2_b2;
-  }
-  if (parallel_ >= 4) {
-    color_clk_mask |= h.p3_r1 | h.p3_g1 | h.p3_b1 | h.p3_r2 | h.p3_g2 | h.p3_b2;
-  }
-  if (parallel_ >= 5) {
-    color_clk_mask |= h.p4_r1 | h.p4_g1 | h.p4_b1 | h.p4_r2 | h.p4_g2 | h.p4_b2;
-  }
-  if (parallel_ >= 6) {
-    color_clk_mask |= h.p5_r1 | h.p5_g1 | h.p5_b1 | h.p5_r2 | h.p5_g2 | h.p5_b2;
-  }
+  gpio_bits_t color_clk_mask = 0; // Mask of bits while clocking in.
+  color_clk_mask |= h.p0_r1 | h.p0_g1 | h.p0_b1 | h.p0_r2 | h.p0_g2 | h.p0_b2 | h.clock;
 
-  color_clk_mask |= h.clock;
+  int signal_columns = (columns_ / 31)  * 16;
 
+  // fprintf(stdout, "signal1 columns %d \n", signal_columns);
   // Depending if we do dithering, we might not always show the lowest bits.
   const int start_bit = std::max(pwm_low_bit, kBitPlanes - pwm_bits_);
-
-  const uint8_t half_double = double_rows_/2;
-  for (uint8_t row_loop = 0; row_loop < double_rows_; ++row_loop) {
-    uint8_t d_row;
-    switch (scan_mode_) {
-    case 0:  // progressive
-    default:
-      d_row = row_loop;
-      break;
-
-    case 1:  // interlaced
-      d_row = ((row_loop < half_double)
-               ? (row_loop << 1)
-               : ((row_loop - half_double) << 1) + 1);
-    }
-
-    // Rows can't be switched very quickly without ghosting, so we do the
-    // full PWM of one row before switching rows.
-    for (int b = start_bit; b < kBitPlanes; ++b) {
-      gpio_bits_t *row_data = ValueAt(d_row, 0, b);
-      // While the output enable is still on, we can already clock in the next
-      // data.
-      for (int col = 0; col < columns_; ++col) {
-        const gpio_bits_t &out = *row_data++;
-        io->WriteMaskedBits(out, color_clk_mask);  // col + reset clock
-        io->SetBits(h.clock);               // Rising edge: clock color in.
+  if (strncasecmp(panel_type_, "icn2053", 7) == 0)
+  {
+    color_clk_mask |= h.output_enable | h.strobe;
+    InitICN2053(io, *hardware_mapping_, columns_);
+    for (uint8_t row_loop = 0; row_loop < double_rows_; ++row_loop)
+    {
+      uint8_t d_row = row_loop;
+      for (int i = 0; i < 16; i++)
+      {
+        row_setter_->SetRowAddress(io, (d_row * 32 + i) % 3);
+        int oeCount = 0;
+        for (int j = 0; j < signal_columns / 32; j++)
+        {
+          int col = j * 16 + i;
+          gpio_bits_t out = 0;
+          for (int b = start_bit; b < kBitPlanes; ++b)
+          {
+            gpio_bits_t *row_data = DumpValueAt(d_row, col, b);
+            out = *row_data;
+            if (oeCount < 150)
+            {
+              out |= h.output_enable;
+              oeCount++;
+            }
+            if(j == ((signal_columns / 16) - 1) && b == kBitPlanes - 1) {
+                out |= h.strobe;    // last clock
+            }
+            io->WriteMaskedBits(out, color_clk_mask); // col + reset clock
+            io->ClearBits(h.output_enable);
+            io->SetBits(h.clock); // Rising edge: clock color in.
+            out &= ~h.output_enable;
+          }
+          io->ClearBits(color_clk_mask); // clock back to normal.
+        }
+        // sOutputEnablePulser->SendPulse(12);
+        struct timespec sleep_time= { 0, 154000 };
+        nanosleep(&sleep_time, NULL);
       }
-      io->ClearBits(color_clk_mask);    // clock back to normal.
-
-      // OE of the previous row-data must be finished before strobe.
-      sOutputEnablePulser->WaitPulseFinished();
-
-      // Setting address and strobing needs to happen in dark time.
-      row_setter_->SetRowAddress(io, d_row);
-
-      io->SetBits(h.strobe);   // Strobe in the previously clocked in row.
-      io->ClearBits(h.strobe);
-
-      // Now switch on for the sleep time necessary for that bit-plane.
-      sOutputEnablePulser->SendPulse(b);
     }
+  }
+  else if (strncasecmp(panel_type_, "mbi5124", 7) == 0)  // more init types
+  {
+    // InitMBI5124(io, *hardware_mapping_, columns_);
+    scan_count_++;
+    if(scan_count_ > 20) {
+      scan_count_ = 0;
+      InitMBI5124(io, *hardware_mapping_, columns_);
+    }
+    for (uint8_t row_loop = 0; row_loop < double_rows_; ++row_loop) {
+      uint8_t d_row = row_loop;
+      for (int b = start_bit; b < kBitPlanes; ++b) {
+        gpio_bits_t *row_data = DumpValueAt(d_row, 0, b);
+        // While the output enable is still on, we can already clock in the next
+        // data.
+        for (int col = 0; col < signal_columns; ++col) {
+          // const gpio_bits_t &out = *row_data++;
+          const gpio_bits_t &out = *DumpValueAt(d_row, col, b);
+          io->WriteMaskedBits(out, color_clk_mask);  // col + reset clock
+          io->SetBits(h.clock);               // Rising edge: clock color in.
+        }
+        io->ClearBits(color_clk_mask);    // clock back to normal.
+
+        // OE of the previous row-data must be finished before strobe.
+        // sOutputEnablePulser->WaitPulseFinished();
+
+        // Setting address and strobing needs to happen in dark time.
+        row_setter_->SetRowAddress(io, d_row);
+
+        // io->SetBits(h.output_enable);
+        io->SetBits(h.strobe);   // Strobe in the previously clocked in row.
+        io->ClearBits(h.strobe);
+        // io->ClearBits(h.output_enable);
+
+        // Now switch on for the sleep time necessary for that bit-plane.
+        sOutputEnablePulser->SendPulse(b);
+      }
+    }
+    
+    }  
+  else
+  {
+    fprintf(stderr, "Unknown panel type '%s'; typo ?\n", panel_type_);
   }
 }
 }  // namespace internal
