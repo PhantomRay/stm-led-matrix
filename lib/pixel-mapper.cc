@@ -277,6 +277,65 @@ private:
   int parallel_;
 };
 
+class VerticalFlipMapper : public PixelMapper {
+public:
+  VerticalFlipMapper() {}
+
+  virtual const char *GetName() const { return "VF-mapper"; }
+
+  virtual bool SetParameters(int chain, int parallel, const char *param) {
+    chain_ = chain;
+    parallel_ = parallel;
+    //  ___       ___       ___
+    // | O |  -< | O |  -< | O |
+    // | ^ |  |  | ^ |  |  | ^ |
+    // | I | <-  | I | <-  | I |}- Raspbery Pi connector
+    //  ---       ---       ---
+    return true;
+  }
+
+  virtual bool GetSizeMapping(int matrix_width, int matrix_height,
+                              int *visible_width, int *visible_height)
+    const {
+    *visible_height = matrix_width * parallel_ / chain_;
+    *visible_width = matrix_height * chain_ / parallel_;
+#if 0
+     fprintf(stderr, "%s: C:%d P:%d. Turning W:%d H:%d Physical "
+	     "into W:%d H:%d Virtual\n",
+             GetName(), chain_, parallel_,
+	     *visible_width, *visible_height, matrix_width, matrix_height);
+#endif
+    return true;
+  }
+
+  virtual void MapVisibleToMatrix(int matrix_width, int matrix_height,
+                                  int x, int y,
+                                  int *matrix_x, int *matrix_y) const {
+    const int panel_width  = matrix_width  / chain_;
+    const int panel_height = matrix_height / parallel_;
+    // const int x_panel_start = y / panel_height * panel_width;
+    // const int y_panel_start = x / panel_width * panel_height;
+    // const int x_within_panel = x % panel_width;
+    // const int y_within_panel = y % panel_height;
+    // const bool needs_flipping = z_ && (y / panel_height) % 2 == 1;
+    // *matrix_x = x_panel_start + (needs_flipping
+    //                              ? panel_width - 1 - x_within_panel
+    //                              : x_within_panel);
+    // *matrix_y = y_panel_start + (needs_flipping
+    //                              ? panel_height - 1 - y_within_panel
+    //                              : y_within_panel);
+      int x_new, y_new;
+      y_new = (panel_height-1) - (x % panel_height);  //rows = 32
+      x_new = (x / panel_height) * panel_width + y;
+      *matrix_x = x_new;
+      *matrix_y = y_new;
+  }
+
+private:
+  bool z_;
+  int chain_;
+  int parallel_;
+};
 
 typedef std::map<std::string, PixelMapper*> MapperByName;
 static void RegisterPixelMapperInternal(MapperByName *registry,
@@ -296,6 +355,7 @@ static MapperByName *CreateMapperMap() {
   RegisterPixelMapperInternal(result, new UArrangementMapper());
   RegisterPixelMapperInternal(result, new VerticalMapper());
   RegisterPixelMapperInternal(result, new MirrorPixelMapper());
+  RegisterPixelMapperInternal(result, new VerticalFlipMapper());
   return result;
 }
 
