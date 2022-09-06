@@ -463,6 +463,7 @@ static void DisableRealtimeThrottling() {
   // us to hog the kernel solidly. The default of 950000 leaves 50ms that
   // can generate visible flicker, so we reduce that to 1ms.
   WriteTo("/proc/sys/kernel/sched_rt_runtime_us", "999000");
+  printf("1ms set\n");
 }
 
 bool Timers::Init() {
