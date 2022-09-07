@@ -655,6 +655,7 @@ void Framebuffer::Fill(uint8_t r, uint8_t g, uint8_t b) {
   uint16_t red, green, blue;
   MapColors(r, g, b, &red, &green, &blue);
   const PixelDesignator &fill = (*shared_mapper_)->GetFillColorBits();
+  gpio_bits_t color_mask =  ~(fill.r_bit | fill.g_bit | fill.b_bit);
 
   for (int b = 0; b < KBITPlanes; ++b) {
     uint16_t mask = 0x8000 >> b;
@@ -666,7 +667,7 @@ void Framebuffer::Fill(uint8_t r, uint8_t g, uint8_t b) {
     for (int row = 0; row < double_rows_; ++row) {
       for (int col = 0; col < columns_; ++col) {
         gpio_bits_t *row_data = ValueAt(row, col, b);
-        *row_data = plane_bits;
+        *row_data = (*row_data & color_mask) | plane_bits;
       }
     }
   }
@@ -867,7 +868,7 @@ static void InitICN2153(GPIO *io, const struct HardwareMapping &h, uint8_t chip_
   reg_val[1][1] = (reg_val[1][0] & 0x83FF) | (28 << 10);
   reg_val[1][2] = (reg_val[1][0] & 0x83FF) | (23 << 10);
   /*reg3*/
-  reg_val[2][0] = (4 << 12) | (0 << 10) | (1 << 9)  | (0 << 8) | (0 << 4) | (0 << 3)  | (1 << 1) | (3 << 0);
+  reg_val[2][0] = (4 << 12) | (0 << 10) | (1 << 9)  | (0 << 8) | (0 << 4) | (0 << 3)  | (1 << 2) | (3 << 0);
   reg_val[2][1] = reg_val[2][0];
   reg_val[2][2] = reg_val[2][0];
   /*reg4*/
@@ -995,9 +996,10 @@ uint32_t start_time = GetMicrosecondCounter();
 
   uint16_t gclk_cnt = 0;
   uint32_t scan_cnt = 0;
+  uint32_t chip_bits = chip_num * 16U;
   gpio_bits_t *pixel_color = bitplane_buffer_;
   for (uint16_t pixel_cnt = 0; pixel_cnt < 16 * 8; pixel_cnt++) {
-    for (uint16_t double_pixel_cnt = 0; double_pixel_cnt < chip_num*16U; double_pixel_cnt++) {          
+    for (uint16_t double_pixel_cnt = 0; double_pixel_cnt < chip_bits; double_pixel_cnt++) {          
       io->SetBits(h.output_enable);
       gclk_cnt++;
       io->ClearBits(h.output_enable);
@@ -1014,7 +1016,7 @@ uint32_t start_time = GetMicrosecondCounter();
         }
         io->WriteMaskedBits(*pixel_color, color_clk_mask); // col + reset clock
       } 
-      if(double_pixel_cnt == (chip_num * 16U - 1)){
+      if(double_pixel_cnt == (chip_bits - 1)){
         io->SetBits(h.strobe);
       }
       pixel_color++;
