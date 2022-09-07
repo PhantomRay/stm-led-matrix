@@ -447,9 +447,9 @@ Framebuffer::~Framebuffer() {
     bitplane_timings.push_back(timing_ns);
     if (b >= dither_bits) timing_ns *= 2;
   }
-  // sOutputEnablePulser = PinPulser::Create(io, h.output_enable,
-  //                                         allow_hardware_pulsing,
-  //                                         bitplane_timings);
+  sOutputEnablePulser = PinPulser::Create(io, 0/*h.output_enable*/,
+                                          false/*allow_hardware_pulsing*/,
+                                          bitplane_timings);
 }
 
 // NOTE: first version for panel initialization sequence, need to refine
