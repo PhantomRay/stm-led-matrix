@@ -318,7 +318,9 @@ Framebuffer::Framebuffer(int rows, int columns, int parallel,
   }
   assert(parallel >= 1 && parallel <= 3);
 
-  bitplane_buffer_ = new gpio_bits_t[double_rows_ * columns_ * KBITPlanes];
+  gpio_buffer_ = new gpio_bits_t[138*8*64+4];
+  bitplane_buffer_ = &gpio_buffer_[4];
+  // bitplane_buffer_ = new gpio_bits_t[double_rows_ * columns_ * KBITPlanes];
 
   // If we're the first Framebuffer created, the shared PixelMapper is
   // still NULL, so create one.
@@ -352,7 +354,9 @@ Framebuffer::Framebuffer(int rows, int columns, int parallel,
 }
 
 Framebuffer::~Framebuffer() {
-  delete [] bitplane_buffer_;
+  // delete [] bitplane_buffer_;
+  delete [] gpio_buffer_;
+  bitplane_buffer_ = NULL;
 }
 
 // TODO: this should also be parsed from some special formatted string, e.g.
@@ -574,14 +578,85 @@ inline gpio_bits_t *Framebuffer::ValueAt(int double_row, int column, int bit) {
                               panel_id * 8 + col_id)* KBITPlanes + bit];
 
 }
+void Framebuffer::SetBuffer_row() {  
+  //set the row -customize for 64x32- In this case, double_rows_=16
+  //I use 1/8 scan mode panel, so only use A,B,C
+  //Buffer must be clear. This function only set gpio pins for row scan.  
+  const struct HardwareMapping &h = *hardware_mapping_;
+  gpio_bits_t row_lookup[16];
+  for (int i = 0; i < double_rows_; ++i) {
+    // To avoid the bit-fiddle in the critical path, utilize
+    // a lookup-table for all possible rows.
+    gpio_bits_t row_address = (i & 0x01) ? h.a : 0;
+    row_address |= (i & 0x02) ? h.b : 0;
+    row_address |= (i & 0x04) ? h.c : 0;
+    // row_address |= (i & 0x08) ? h.d : 0;
+    // row_address |= (i & 0x10) ? h.e : 0;
+    row_lookup[i] = row_address;
+  }
+  uint32_t scan_line = 0;
+  uint32_t gclk_cnt = 0;
+  gpio_bits_t row_mask = ~(h.a | h.b | h.c);
+  gpio_bits_t *pbuf = gpio_buffer_;
+  for (uint32_t group_cnt = 0; group_cnt < 64; group_cnt++) {
+    for (uint32_t scan_cnt = 0; scan_cnt < 8; scan_cnt++) {
+      for (uint32_t gclk_cnt = 0; gclk_cnt < 138; gclk_cnt++) {
+        *pbuf &= row_mask;
+        *pbuf |= row_lookup[scan_cnt];
+        pbuf++;      
+      }
+    }
+  }
+  for (uint32_t gclk_cnt = 0; gclk_cnt < 4; gclk_cnt++) {
+    *pbuf &= row_mask;
+    *pbuf |= row_lookup[0];
+    pbuf++;      
+  }
+}
+void Framebuffer::SetBuffer_strobe() {
+  //Buffer must be clear. This function only set gpio pin for Latch(strobe).
+  const struct HardwareMapping &h = *hardware_mapping_;
+  uint32_t pixel_pos;
+  bool strobe_flag = false;    
+  uint32_t strobe_val = h.strobe;
+  // for (int y = 0; y < double_rows_; ++y) {
+  //   for (int x = 0; x < columns_; ++x) {
+  //     pixel_pos = ValueAt(y, x, 0) - bitplane_buffer_;
+  //     if((x >= (columns_ - 16)) && ((y % 16) < 8)){
+  //       strobe_flag = true;
+  //     }
+  //     else{
+  //       strobe_flag = false;
+  //     }
+  //     for (int b = 0; b < KBITPlanes; ++b) {
+  //       if((b == 15) && (strobe_flag == true)){
+  //         bitplane_buffer_[pixel_pos + b] |= strobe_val;
+  //       }
+  //       // else{
+  //       //   bitplane_buffer_[pixel_pos + b] = 0;
+  //       // }
+  //     }
+  //   }
+  // }
 
+  for (int y = 0; y < 8; ++y) {
+    for (int x = columns_ - 16; x < columns_; ++x) {
+      pixel_pos = ValueAt(y, x, 15) - bitplane_buffer_;
+      bitplane_buffer_[pixel_pos] |= strobe_val;
+    }
+  }
+}
 void Framebuffer::Clear() {
   if (inverse_color_) {
     Fill(0, 0, 0);
   } else  {
     // Cheaper.
-    memset(bitplane_buffer_, 0,
-           sizeof(*bitplane_buffer_) * double_rows_ * columns_ * KBITPlanes);
+    // memset(bitplane_buffer_, 0,
+    //        sizeof(*bitplane_buffer_) * double_rows_ * columns_ * KBITPlanes);
+    
+    memset(gpio_buffer_, 0, sizeof(*bitplane_buffer_) * (138 * 8 * 64 + 4));
+    SetBuffer_strobe();
+    SetBuffer_row();    
   }
 }
 
@@ -864,7 +939,7 @@ static void InitICN2153(GPIO *io, const struct HardwareMapping &h, uint8_t chip_
   reg_val[0][1] = reg_val[0][0];
   reg_val[0][2] = reg_val[0][0];
   /*reg2*/
-  reg_val[1][0] = (31 << 10) | (0 << 9) | (64 << 1)  | (0 << 0);
+  reg_val[1][0] = (31 << 10) | (0 << 9) | (255 << 1)  | (0 << 0);
   reg_val[1][1] = (reg_val[1][0] & 0x83FF) | (28 << 10);
   reg_val[1][2] = (reg_val[1][0] & 0x83FF) | (23 << 10);
   /*reg3*/
@@ -893,8 +968,7 @@ static void InitICN2153(GPIO *io, const struct HardwareMapping &h, uint8_t chip_
 
 void Framebuffer::DumpToMatrix(GPIO *io, int pwm_low_bit)
 {
-  gpio_bits_t out;
-const struct HardwareMapping &h = *hardware_mapping_;
+  const struct HardwareMapping &h = *hardware_mapping_;
   static bool flag = false;
   int chip_num = (columns_/64)*8;
   if(flag == false){
@@ -906,141 +980,39 @@ const struct HardwareMapping &h = *hardware_mapping_;
       return;
   }
 
-// /*test for point */
-// for(int j=0;j<62;j++){
-//   for(int i=0;i<24;i++){
-//     SetPixel(4*i, j, 128,0,0);
-//   }
-// }
-// for(int i=0;i<24;i++){
-//   SetPixel(4*i, 63, 0,128,0);
-// }
-  sendLAT(io, h, 14);  // Pre-active command
+  sendLAT(io, h, 14);
   sendLAT(io, h, 12);
-  // sendConfData(io, h, 0, 0, 0, 2); 
+  reg_val[4][0] = 0x0008;         //Reg5:0x003C
+  reg_val[4][1] = reg_val[4][0];
+  reg_val[4][2] = reg_val[4][0];
+  sendConfData(io, h, reg_val[4], 4, chip_num); 
   sendLAT(io, h, 3);  // Vertical sync
-  
-  // struct timespec oe_sleep_time = { 0, 1000 };
-  
-  gpio_bits_t color_clk_mask = 0; // Mask of bits while clocking in.
-  color_clk_mask = h.p0_r1 | h.p0_g1 | h.p0_b1 | h.p0_r2 | h.p0_g2 | h.p0_b2
-                   | h.clock | h.strobe;
-  gpio_bits_t row_mask_ = h.a | h.b | h.c | h.d;
-  gpio_bits_t row_lookup_[32];
-  for (int i = 0; i < double_rows_; ++i) {
-    // To avoid the bit-fiddle in the critical path, utilize
-    // a lookup-table for all possible rows.
-    gpio_bits_t row_address = (i & 0x01) ? h.a : 0;
-    row_address |= (i & 0x02) ? h.b : 0;
-    row_address |= (i & 0x04) ? h.c : 0;
-    row_address |= 0;//(i & 0x08) ? h.d : 0;
-    row_address |= 0;//(i & 0x10) ? h.e : 0;
-    row_lookup_[i] = row_address;
-  }
-  uint8_t scan_line = 0;
-  int id;
-  int refresh_cnt = 0;  
-uint32_t start_time = GetMicrosecondCounter();  
-  
-    // gpio_bits_t *pixel_color = bitplane_buffer_;
-  //   for (uint16_t pixel_cnt = 0; pixel_cnt < 16*8; pixel_cnt++) {
-  //       for (id = 0; id < 4; id++) {
-  //         io->SetBits(h.output_enable);
-  //         io->ClearBits(h.output_enable);
-  //       }
-  //       //setScanLine(io, *hardware_mapping_, &scan_line);
-  //       io->WriteMaskedBits(row_lookup_[scan_line], row_mask_);
-  //       scan_line = (scan_line + 1) & 0x07;
-  //       /*36us(128bit=16bitx8) when CHIP_NUM = 8*/
-  //       //out = 0;//h_p0_r1
-  //       for (int j = 0; j < chip_num; j++)
-  //       {
-  //         for (id = 0; id < (134/chip_num); id++) {
-  //           io->SetBits(h.output_enable);   // nanosleep(&oe_sleep_time, NULL);
-  //           io->ClearBits(h.output_enable); // nanosleep(&oe_sleep_time, NULL);
-  //         }
-  //         for (int b = 0; b < 16; b++)
-  //         {
-  //           io->WriteMaskedBits(*pixel_color, color_clk_mask); // col + reset clock
-  //           pixel_color++;
-  //           if((j == (chip_num - 1)) && (b == 15)){
-  //             io->SetBits(h.strobe);
-  //           }
-  //           io->SetBits(h.clock); // Rising edge: clock color in.
-  //         }
-  //         io->ClearBits(color_clk_mask); // clock back to normal.
-  //       }
-  //       for (id = 0; id < (134%chip_num); id++) {
-  //         io->SetBits(h.output_enable);
-  //         io->ClearBits(h.output_enable);
-  //       }
-  //   }
-  //   // refresh_cnt += 4; //=16*8/SCAN_NUM
-  // // }
-  // refresh_cnt = 16 * 8;
-  // for (; refresh_cnt < 64*8; refresh_cnt++) {
-  //   for (id = 0; id < 4; id++) {
-  //     io->SetBits(h.output_enable);
-  //     io->SetBits(h.output_enable);
-  //     io->ClearBits(h.output_enable);
-  //   }
-  //   io->WriteMaskedBits(row_lookup_[scan_line], row_mask_);
-  //   scan_line = (scan_line + 1) & 0x07;
-  //   for (id = 0; id < 134; id++) {
-  //     io->SetBits(h.output_enable);
-  //     io->SetBits(h.output_enable);
-  //     io->ClearBits(h.output_enable);
-  //   }
-  // }
-// printf("passtime=%d\n", GetMicrosecondCounter() - start_time);
+    
+  gpio_bits_t color_clk_mask = h.p0_r1 | h.p0_g1 | h.p0_b1 |
+                               h.p0_r2 | h.p0_g2 | h.p0_b2 | 
+                               h.clock | h.strobe;
+  gpio_bits_t row_mask = h.a | h.b | h.c | h.d;
+  gpio_bits_t row_color_clk_mask = row_mask | color_clk_mask;
 
-  uint16_t gclk_cnt = 0;
-  uint32_t scan_cnt = 0;
-  uint32_t chip_bits = chip_num * 16U;
-  gpio_bits_t *pixel_color = bitplane_buffer_;
-  for (uint16_t pixel_cnt = 0; pixel_cnt < 16 * 8; pixel_cnt++) {
-    for (uint16_t double_pixel_cnt = 0; double_pixel_cnt < chip_bits; double_pixel_cnt++) {          
-      io->SetBits(h.output_enable);
-      gclk_cnt++;
-      io->ClearBits(h.output_enable);
-      if(gclk_cnt == 4){
-        // setScanLine(io, *hardware_mapping_, &scan_line);
-        // SetRowAddress(io, scan_line);
-        io->WriteMaskedBits(row_lookup_[scan_line] | *pixel_color, row_mask_ | color_clk_mask);
-        scan_line = (scan_line + 1) & 0x07;
-      }
-      else{
-        if(gclk_cnt == 138){
-          gclk_cnt = 0;
-          scan_cnt++;
-        }
-        io->WriteMaskedBits(*pixel_color, color_clk_mask); // col + reset clock
-      } 
-      if(double_pixel_cnt == (chip_bits - 1)){
-        io->SetBits(h.strobe);
-      }
-      pixel_color++;
-      io->SetBits(h.clock); // Rising edge: clock color in.            
-    }
-    io->ClearBits(color_clk_mask);
-  }
-  // printf("%d\n", scan_cnt);
-  //scan_cnt = chip_num*16U*128
-  while (scan_cnt < 8 * 64) {
+// uint32_t start_time = GetMicrosecondCounter();  
+  
+  uint32_t gclk_cnt = 0;
+  uint32_t gclk_num = 138*8*64 + 4;
+  gpio_bits_t *pixel_color = gpio_buffer_;
+  
+  do{
     io->SetBits(h.output_enable);
     gclk_cnt++;
     io->ClearBits(h.output_enable);
-    if(gclk_cnt == 4){
-      io->WriteMaskedBits(row_lookup_[scan_line], row_mask_);
-      scan_line = (scan_line + 1) & 0x07;
-    }
-    else{
-      if(gclk_cnt == 138){
-        gclk_cnt = 0;
-        scan_cnt++;
-      }
-    }
-  }
+    
+    io->WriteMaskedBits(*pixel_color++, row_color_clk_mask);
+
+    io->SetBits(h.clock);
+  }while(gclk_cnt < gclk_num/*(138*8*64 + 4)*/);
+  io->ClearBits(color_clk_mask);
+  // sendLAT(io, h, 14);  // Pre-active command
+  // sendLAT(io, h, 13);
+  // printf("\tpasstime=%d\n", GetMicrosecondCounter() - start_time);
 }
 
 

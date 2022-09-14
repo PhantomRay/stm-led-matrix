@@ -121,7 +121,34 @@ public:
 private:
   RGBMatrix *const matrix_;
 };
+class Test : public DemoRunner {
+public:
+  Test(RGBMatrix *m)
+    : DemoRunner(m), matrix_(m) {
+    offscreen_ = matrix_->CreateFrameCanvas();}
+  void Run() override {
+    const uint8_t max_brightness = matrix_->brightness();
+    matrix_->SetBrightness(matrix_->brightness());
+    const uint8_t c = 255;
+    uint8_t count = 0;
 
+    while (!interrupt_received) {
+      switch (count % 4) {
+      case 0: offscreen_->Fill(c, 0, 0); break;
+      case 1: offscreen_->Fill(0, c, 0); break;
+      case 2: offscreen_->Fill(0, 0, c); break;
+      case 3: offscreen_->Fill(c, c, c); break;
+      }
+      count++;
+      usleep(5000 * 1000);
+      offscreen_ = matrix_->SwapOnVSync(offscreen_);
+    }
+  }
+
+private:
+  RGBMatrix *const matrix_;
+  FrameCanvas* offscreen_;
+};
 class SimpleSquare : public DemoRunner {
 public:
   SimpleSquare(Canvas *m) : DemoRunner(m) {}
@@ -1165,6 +1192,10 @@ int main(int argc, char *argv[]) {
 
   case 11:
     demo_runner = new BrightnessPulseGenerator(matrix);
+    break;
+    
+  case 12:
+    demo_runner = new Test(matrix);
     break;
   }
 

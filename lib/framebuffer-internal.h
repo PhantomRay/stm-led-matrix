@@ -126,6 +126,8 @@ public:
   int width() const;
   int height() const;
   void SetPixel(int x, int y, uint8_t red, uint8_t green, uint8_t blue);
+  void SetBuffer_row();
+  void SetBuffer_strobe();
   void Clear();
   void Fill(uint8_t red, uint8_t green, uint8_t blue);
 
@@ -165,6 +167,7 @@ private:
   // Each bitplane-column is pre-filled IoBits, of which the colors are set.
   // Of course, that means that we store unrelated bits in the frame-buffer,
   // but it allows easy access in the critical section.
+  gpio_bits_t *gpio_buffer_;
   gpio_bits_t *bitplane_buffer_;
   inline gpio_bits_t *ValueAt(int double_row, int column, int bit);
 
