@@ -169,7 +169,7 @@ private:
   // but it allows easy access in the critical section.
   gpio_bits_t *gpio_buffer_;
   gpio_bits_t *bitplane_buffer_;
-  inline gpio_bits_t *ValueAt(int double_row, int column, int bit);
+  inline uint32_t ValueAt(int double_row, int column, int bit);
 
   PixelDesignatorMap **shared_mapper_;  // Storage in RGBMatrix.
 };

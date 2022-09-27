@@ -478,11 +478,14 @@ bool RGBMatrix::Impl::StartRefresh() {
     // The Raspberry Pi1 only has one core, so this affinity
     //   call will simply fail and we keep using the only core.
     
-    system("sudo cp /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq "
-      "/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq");
+    // system("sudo cp /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq "
+    //   "/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq");
     int prio = sched_get_priority_max(SCHED_FIFO);
     updater_->Start(prio, (1<<3));  //updater_->Start(99, (1<<3)); //Prio: high. Also: put on last CPU.
     system("echo -1 >/proc/sys/kernel/sched_rt_runtime_us");
+    // system("echo 7 >/proc/irq/default_smp_affinity");
+    /* You cannot change this value on Raspbian. It will probably be changed automatically by the system.*/
+    // system("echo 3 >/proc/irq/12/smp_affinity");  //echo : I/O error 
   }
   return updater_ != NULL;
 }

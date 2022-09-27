@@ -313,17 +313,6 @@ public:
                                   int *matrix_x, int *matrix_y) const {
     const int panel_width  = matrix_width  / chain_;
     const int panel_height = matrix_height / parallel_;
-    // const int x_panel_start = y / panel_height * panel_width;
-    // const int y_panel_start = x / panel_width * panel_height;
-    // const int x_within_panel = x % panel_width;
-    // const int y_within_panel = y % panel_height;
-    // const bool needs_flipping = z_ && (y / panel_height) % 2 == 1;
-    // *matrix_x = x_panel_start + (needs_flipping
-    //                              ? panel_width - 1 - x_within_panel
-    //                              : x_within_panel);
-    // *matrix_y = y_panel_start + (needs_flipping
-    //                              ? panel_height - 1 - y_within_panel
-    //                              : y_within_panel);
       int x_new, y_new;
       y_new = (panel_height-1) - (x % panel_height);  //rows = 32
       x_new = (x / panel_height) * panel_width + y;
