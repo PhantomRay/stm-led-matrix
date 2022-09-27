@@ -1,3 +1,18 @@
+# Notes for LED panels based on 2153 chips
+
+In `/boot/cmdline.txt`
+
+```
+
+isolcpus=3 nohz_full=3 rcu_nocbs=3 irqaffinity=0-2 
+```
+
+set pixel-mapper=`VF-mapper`. For example
+
+```sh
+sudo examples-api-use/demo -D12  --led-rows=32 --led-cols=64 --led-slowdown-gpio=3 --led-chain=3 --led-pixel-mapper="VF-mapper" --led-brightness=50
+```
+
 Controlling RGB LED display with Raspberry Pi GPIO
 ==================================================
 
