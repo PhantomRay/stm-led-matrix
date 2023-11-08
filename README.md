@@ -1,3 +1,9 @@
+# NO SUPPORT WILL BE PROVIDED
+
+# ESP32 VERSION
+
+https://github.com/PhantomRay/stm-led-esp32
+
 # Notes for LED panels based on 2153 chips
 
 In `/boot/cmdline.txt`
